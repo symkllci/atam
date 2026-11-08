@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>10 Kasım · Sonsuza Dek</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@500;600;700&family=Playfair+Display:ital,wght@1,400&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: #000; overflow: hidden; font-family: Inter, system-ui, sans-serif; }
+  #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+  canvas {
+    display: block;
+    height: min(100dvh, calc(100vw * 16 / 9));
+    width: auto;
+    aspect-ratio: 9 / 16;
+  }
+  #ui {
+    position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+    display: flex; gap: 6px; padding: 6px;
+    background: rgba(18, 18, 18, .55); backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(255,255,255,.1); border-radius: 999px;
+    transition: opacity .3s;
+  }
+  #ui.hidden { opacity: 0; pointer-events: none; }
+  #ui button {
+    font: 600 13px Inter, sans-serif; color: #fff; cursor: pointer; white-space: nowrap;
+    background: rgba(255,255,255,.07); border: 0; border-radius: 999px; padding: 10px 15px;
+  }
+  #ui button:hover { background: rgba(255,255,255,.16); }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="c"></canvas></div>
+<div id="ui">
+  <button id="fs">⛶</button>
+</div>
+
+<script>
+// ================= AYARLAR =================
+const W = 1080, H = 1920;             // 9:16 — Reels / TikTok / Shorts
+const N = 9000;                       // parçacık sayısı
+const RED = '#E30A17';
+const YIL = new Date().getFullYear() - 1938;   // 2026 → 88. yıl
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+cv.width = W; cv.height = H;
+
+const off = document.createElement('canvas');
+off.width = W; off.height = H;
+const octx = off.getContext('2d', { willReadFrequently: true });
+
+const clamp01 = v => Math.max(0, Math.min(1, v));
+const fade = (t, a, b) => clamp01((t - a) / (b - a));
+const ease = x => 1 - Math.pow(1 - x, 3);
+
+// ================= SABİT KATMANLAR =================
+const bg = document.createElement('canvas');
+bg.width = W; bg.height = H;
+(() => {
+  const b = bg.getContext('2d');
+  const g = b.createRadialGradient(W/2, H*0.42, 40, W/2, H*0.42, H*0.8);
+  g.addColorStop(0, '#17181c');
+  g.addColorStop(0.5, '#0a0a0c');
+  g.addColorStop(1, '#030303');
+  b.fillStyle = g; b.fillRect(0, 0, W, H);
+})();
+
+const vignette = document.createElement('canvas');
+vignette.width = W; vignette.height = H;
+(() => {
+  const v = vignette.getContext('2d');
+  const g = v.createRadialGradient(W/2, H/2, H*0.28, W/2, H/2, H*0.72);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(0,0,0,0.55)');
+  v.fillStyle = g; v.fillRect(0, 0, W, H);
+})();
+
+const grain = document.createElement('canvas');
+grain.width = grain.height = 256;
+(() => {
+  const g = grain.getContext('2d');
+  const id = g.createImageData(256, 256);
+  for (let i = 0; i < id.data.length; i += 4) {
+    const v = Math.random() * 255;
+    id.data[i] = id.data[i+1] = id.data[i+2] = v; id.data[i+3] = 255;
+  }
+  g.putImageData(id, 0, 0);
+})();
+const grainPattern = ctx.createPattern(grain, 'repeat');
+
+// ================= ÇİZİM YARDIMCILARI =================
+function star(c, x, y, R) {
+  const r = R * 0.381966;
+  c.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = Math.PI + i * Math.PI / 5;
+    const rr = i % 2 ? r : R;
+    c.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+  }
+  c.closePath(); c.fill();
+}
+
+// Türk Bayrağı Kanunu oranları (G = yükseklik)
+function drawFlag(c, cx, cy, fw) {
+  const G = fw / 1.5, x0 = cx - fw / 2, y0 = cy - G / 2;
+  c.fillStyle = RED; c.fillRect(x0, y0, fw, G);
+  c.fillStyle = '#fff';
+  c.beginPath(); c.arc(x0 + 0.5 * G, cy, 0.25 * G, 0, Math.PI * 2); c.fill();
+  c.fillStyle = RED;
+  c.beginPath(); c.arc(x0 + 0.5625 * G, cy, 0.2 * G, 0, Math.PI * 2); c.fill();
+  c.fillStyle = '#fff';
+  star(c, x0 + 0.8208 * G, cy, 0.125 * G);
+  return { x0, y0, fw, G };
+}
+
+function drawLines(c, lines) {
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  for (const l of lines) {
+    c.font = `${l.size}px Anton, Impact, sans-serif`;
+    c.letterSpacing = (l.ls || 0) + 'px';
+    c.fillStyle = l.color || '#fff';
+    c.fillText(l.text, W / 2, l.y);
+  }
+  c.letterSpacing = '0px';
+}
+
+// ---- Portre → gümüş halftone parçacık ----
+// İki portre tek sahnede, kaydırılmış (modern diptik) yerleşim
+const DIP = [
+  { cx: 300, cy: 790,  rw: 470, rh: 660, label: '1881 · SELANİK', ly: 'below' },
+  { cx: 780, cy: 1010, rw: 470, rh: 660, label: '1938 · İSTANBUL', ly: 'above' }
+];
+
+function sampleOne(img, L, gap, pts) {
+  const { cx, cy, rw, rh } = L;
+  const x0 = Math.round(cx - rw / 2), y0 = Math.round(cy - rh / 2);
+  const sc = Math.max(rw / img.width, rh / img.height);
+  const dw = img.width * sc, dh = img.height * sc;
+  const dx = x0 + (rw - dw) / 2, dy = y0 + (rh - dh) * 0.25;
+  octx.save();
+  octx.beginPath(); octx.rect(x0, y0, rw, rh); octx.clip();
+  octx.drawImage(img, dx, dy, dw, dh);
+  octx.restore();
+  const d = octx.getImageData(x0, y0, rw, rh).data;
+
+  const hist = new Array(256).fill(0); let cnt = 0;
+  for (let i = 0; i < d.length; i += 4 * 7) {
+    hist[(0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2]) | 0]++; cnt++;
+  }
+  let acc = 0, lo = 0, hi = 255;
+  for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc < cnt * 0.02) lo = i; if (acc < cnt * 0.985) hi = i; }
+
+  for (let y = 0; y < rh; y += gap) {
+    for (let x = 0; x < rw; x += gap) {
+      const i = (y * rw + x) * 4;
+      let l = (0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2]);
+      l = Math.pow(clamp01((l - lo) / ((hi - lo) || 1)), 1.1);
+      // yumuşak kenarlı dikdörtgen maske (alt kenar daha uzun söner)
+      const mx = clamp01(Math.min(x, rw - x) / (rw * 0.1));
+      const my = clamp01(y / (rh * 0.06)) * clamp01((rh - y) / (rh * 0.22));
+      const v = l * mx * my;
+      if (v < 0.07) continue;
+      const c = 35 + 220 * v;
+      pts.push({
+        x: x0 + x, y: y0 + y,
+        r: c, g: c * 0.98, b: c * 0.95,          // sıcak gümüş
+        a: 0.3 + 0.7 * v,
+        s: gap * (0.3 + 0.85 * v)
+      });
+    }
+  }
+}
+
+function portraitSampler(imgs) {
+  return gap => {
+    const pts = [];
+    imgs.forEach((im, k) => { octx.clearRect(0, 0, W, H); sampleOne(im, DIP[k], gap, pts); });
+    octx.clearRect(0, 0, W, H);
+    for (const L of DIP) {
+      const rg = octx.createRadialGradient(L.cx, L.cy, 40, L.cx, L.cy, L.rw * 0.75);
+      rg.addColorStop(0, 'rgba(255,245,235,.7)');
+      rg.addColorStop(1, 'rgba(255,245,235,0)');
+      octx.fillStyle = rg; octx.fillRect(0, 0, W, H);
+    }
+    return { pts };
+  };
+}
+
+// ================= SAHNE → HEDEFLER =================
+function collect(def, gap) {
+  octx.clearRect(0, 0, W, H);
+  if (def.sampler) return def.sampler(gap);
+  const flag = def.draw(octx);
+  const d = octx.getImageData(0, 0, W, H).data;
+  const pts = [];
+  for (let y = 0; y < H; y += gap) {
+    for (let x = 0; x < W; x += gap) {
+      const i = (y * W + x) * 4;
+      if (d[i + 3] > 140) pts.push({ x, y, r: d[i], g: d[i+1], b: d[i+2] });
+    }
+  }
+  return { pts, flag };
+}
+
+function buildScene(def, at) {
+  let gap = 7;
+  let res = collect(def, gap);
+  const want = def.sampler ? N * 0.93 : N;
+  gap = Math.max(4, Math.round(gap * Math.sqrt(res.pts.length / want)));
+  res = collect(def, gap);
+
+  // parıltı (glow) katmanı
+  const glow = document.createElement('canvas');
+  glow.width = W / 4; glow.height = H / 4;
+  const gc = glow.getContext('2d');
+  gc.filter = 'blur(14px)';
+  gc.drawImage(off, 0, 0, W / 4, H / 4);
+
+  const pts = res.pts;
+  for (let i = pts.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    [pts[i], pts[j]] = [pts[j], pts[i]];
+  }
+  const f = res.flag;
+  const tg = new Array(N);
+  for (let i = 0; i < N; i++) {
+    if (i < pts.length) {
+      const p = pts[i];
+      const inFlag = f && p.x >= f.x0 && p.x <= f.x0 + f.fw && p.y >= f.y0 && p.y <= f.y0 + f.G;
+      tg[i] = {
+        x: p.x, y: p.y, r: p.r, g: p.g, b: p.b,
+        a: p.a ?? 1, s: p.s ?? gap * 0.8,
+        f: inFlag ? 1 : 0, u: inFlag ? (p.x - f.x0) / f.fw : 0,
+        q: p.x * 0.6 + p.y * 0.4
+      };
+    } else {
+      const red = Math.random() < 0.06;
+      tg[i] = {
+        x: Math.random() * W, y: Math.random() * H,
+        r: 255, g: red ? 60 : 235, b: red ? 70 : 225,
+        a: 0.12 + Math.random() * 0.22, s: 1.4 + Math.random() * 1.6, sp: 1
+      };
+    }
+  }
+  return { id: def.id, at, tg, glow, shine: def.shine ?? 110, glowA: def.glowA ?? 0.07 };
+}
+
+let portraits = [];
+let SC = [], END = 25;
+
+function makeScenes() {
+  const defs = [
+    { id: 'date', dur: 4.8, draw: c => drawLines(c, [
+        { text: '10 KASIM', size: 230, y: 760, ls: 4 },
+        { text: '1938', size: 310, y: 1035, ls: 6 },
+        { text: '09:05', size: 120, y: 1255, color: '#8c8d93', ls: 8 }
+      ]) },
+    portraits.length === 2 && { id: 'portrait', dur: 7, sampler: portraitSampler(portraits), shine: 45, glowA: 0.06 },
+    { id: 'flag', dur: 5.5, glowA: 0.06, draw: c => drawFlag(c, W / 2, 900, 980) },
+    { id: 'sonsuz', dur: 4.5, draw: c => drawLines(c, [
+        { text: 'SONSUZA', size: 250, y: 830, ls: 6 },
+        { text: 'DEK', size: 340, y: 1115, ls: 10 }
+      ]) },
+    { id: 'final', dur: 10, draw: c => {
+        const f = drawFlag(c, W / 2, 545, 800);
+        drawLines(c, [
+          { text: 'İLELEBET', size: 140, y: 1000, color: '#8c8d93', ls: 10 },
+          { text: 'PAYİDAR', size: 215, y: 1185, ls: 6 }
+        ]);
+        return f;
+      } }
+  ].filter(Boolean);
+
+  let at = 0.8;
+  SC = defs.map(d => { const s = buildScene(d, at); at += d.dur; return s; });
+  END = at;
+}
+const T = id => (SC.find(s => s.id === id) || { at: -999 }).at;
+
+// ================= PARÇACIKLAR =================
+const P = [];
+for (let i = 0; i < N; i++) {
+  P.push({
+    x: Math.random() * W, y: Math.random() * H, vx: 0, vy: 0,
+    r: 255, g: 255, b: 255, a: 0, s: 2,
+    k: 0.026 + Math.random() * 0.032,
+    d: Math.random() * 0.75,
+    home: { x: Math.random() * W, y: Math.random() * H, r: 240, g: 240, b: 245, a: 0.18, s: 1.8, sp: 1 }
+  });
+}
+
+let start = 0, cur = -1;
+
+// ================= YAZI KATMANLARI =================
+function wrapText(c, text, x, y, maxW, lh) {
+  const words = text.split(' ');
+  let line = '';
+  for (const w of words) {
+    const test = line ? line + ' ' + w : w;
+    if (c.measureText(test).width > maxW && line) { c.fillText(line, x, y); line = w; y += lh; }
+    else line = test;
+  }
+  c.fillText(line, x, y);
+}
+
+function txt(text, x, y, font, color, ls, alpha) {
+  if (alpha <= 0) return;
+  ctx.globalAlpha = alpha;
+  ctx.font = font; ctx.fillStyle = color; ctx.letterSpacing = ls + 'px';
+  ctx.fillText(text, x, y);
+}
+
+function overlay(t) {
+  ctx.save();
+  ctx.textBaseline = 'middle';
+
+  // --- HUD: üst bilgi satırı ---
+  const hud = fade(t, 0.2, 1.2) * (1 - fade(t, END - 0.8, END));
+  ctx.textAlign = 'left';
+  txt('10.11.1938', 70, 96, '600 26px Inter, sans-serif', 'rgba(255,255,255,.75)', 5, hud);
+  ctx.textAlign = 'right';
+  txt('09:05', W - 70, 96, '600 26px Inter, sans-serif', 'rgba(255,255,255,.75)', 5, hud);
+  ctx.textAlign = 'center';
+  txt(`${YIL}. YIL`, W / 2, 96, '700 24px Inter, sans-serif', '#fff', 6, hud);
+  // nabız gibi atan nokta
+  ctx.globalAlpha = hud * (0.5 + 0.5 * Math.sin(t * 3));
+  ctx.fillStyle = RED;
+  ctx.beginPath(); ctx.arc(W / 2 - 92, 96, 6, 0, Math.PI * 2); ctx.fill();
+
+  // --- HUD: ilerleme çubuğu ---
+  ctx.globalAlpha = hud;
+  ctx.fillStyle = 'rgba(255,255,255,.14)';
+  ctx.fillRect(70, H - 62, W - 140, 3);
+  ctx.fillStyle = 'rgba(255,255,255,.85)';
+  ctx.fillRect(70, H - 62, (W - 140) * clamp01(t / END), 3);
+
+  // --- Portre sahnesi: köşe çizgileri, etiketler, alt yazı ---
+  const tp = T('portrait');
+  const ap = fade(t, tp + 1.6, tp + 2.6) * (1 - fade(t, tp + 6.3, tp + 7));
+  if (ap > 0) {
+    const e = ease(fade(t, tp + 1.6, tp + 2.6));
+    ctx.globalAlpha = ap;
+    ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 2;
+    for (const L of DIP) {
+      const x0 = L.cx - L.rw / 2 - 14, y0 = L.cy - L.rh / 2 - 14;
+      const x1 = L.cx + L.rw / 2 + 14, y1 = L.cy + L.rh / 2 + 14, k = 34 * e;
+      ctx.beginPath();
+      ctx.moveTo(x0, y0 + k); ctx.lineTo(x0, y0); ctx.lineTo(x0 + k, y0);
+      ctx.moveTo(x1 - k, y0); ctx.lineTo(x1, y0); ctx.lineTo(x1, y0 + k);
+      ctx.moveTo(x1, y1 - k); ctx.lineTo(x1, y1); ctx.lineTo(x1 - k, y1);
+      ctx.moveTo(x0 + k, y1); ctx.lineTo(x0, y1); ctx.lineTo(x0, y1 - k);
+      ctx.stroke();
+      if (L.label) {
+        ctx.textAlign = 'left';
+        const ly = L.ly === 'below' ? y1 + 34 : y0 - 34;
+        txt(L.label, x0, ly, '600 22px Inter, sans-serif', 'rgba(255,255,255,.6)', 6, ap);
+      }
+    }
+    ctx.textAlign = 'center';
+    const slide = (1 - e) * 30;
+    txt('GAZİ', W / 2, 1495 + slide, '600 24px Inter, sans-serif', 'rgba(255,255,255,.5)', 14, ap);
+    txt('MUSTAFA KEMAL ATATÜRK', W / 2, 1552 + slide, '600 44px Inter, sans-serif', '#fff', 10, ap);
+  }
+
+  // --- Bayrak alt yazısı ---
+  const tf = T('flag');
+  const af = fade(t, tf + 1.8, tf + 2.8) * (1 - fade(t, tf + 4.8, tf + 5.5));
+  if (af > 0) {
+    const slide = (1 - ease(fade(t, tf + 1.8, tf + 2.8))) * 30;
+    txt('SAYGI VE ÖZLEMLE ANIYORUZ', W / 2, 1400 + slide, '600 36px Inter, sans-serif', '#fff', 12, af);
+  }
+
+  // --- Final: söz + imza ---
+  const tz = T('final');
+  const aq = fade(t, tz + 2, tz + 3.5);
+  if (aq > 0) {
+    ctx.globalAlpha = aq;
+    ctx.letterSpacing = '0px';
+    ctx.font = 'italic 42px "Playfair Display", Georgia, serif';
+    ctx.fillStyle = 'rgba(255,255,255,.92)';
+    wrapText(ctx, '“Benim naçiz vücudum elbet bir gün toprak olacaktır, fakat Türkiye Cumhuriyeti ilelebet payidar kalacaktır.”', W / 2, 1385, 880, 60);
+  }
+  // imza: soldan sağa yazılıyormuş gibi açılır
+  const sg = fade(t, tz + 3.8, tz + 5.8);
+  if (sg > 0) {
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.beginPath(); ctx.rect(W / 2 - 320, 1540, 640 * ease(sg), 250); ctx.clip();
+    if (IMZA.complete && IMZA.naturalWidth) {
+      const iw = 560, ih = iw * IMZA.naturalHeight / IMZA.naturalWidth;
+      ctx.shadowColor = 'rgba(255,255,255,.4)'; ctx.shadowBlur = 16;
+      ctx.drawImage(IMZA, W / 2 - iw / 2, 1645 - ih / 2, iw, ih);
+    }
+    ctx.restore();
+  }
+  const as = fade(t, tz + 5.4, tz + 6.4);
+  if (as > 0) {
+    ctx.textAlign = 'center';
+    txt('1881 — ∞', W / 2, 1808, '600 28px Inter, sans-serif', 'rgba(255,255,255,.65)', 10, as);
+  }
+
+  ctx.restore();
+}
+
+// ================= ANA DÖNGÜ =================
+function frame(now) {
+  const t = (now - start) / 1000;
+
+  let k = -1;
+  for (let i = 0; i < SC.length; i++) if (t >= SC[i].at) k = i;
+  if (k !== cur) {
+    cur = k;
+    for (const p of P) {
+      const ang = Math.random() * Math.PI * 2, sp = Math.random() * 14;
+      p.vx += Math.cos(ang) * sp; p.vy += Math.sin(ang) * sp;
+    }
+  }
+  const sc = cur >= 0 ? SC[cur] : null;
+  const prev = cur > 0 ? SC[cur - 1] : null;
+
+  // iz efekti
+  ctx.globalAlpha = 0.38;
+  ctx.drawImage(bg, 0, 0);
+
+  // yumuşak parıltı
+  ctx.globalCompositeOperation = 'lighter';
+  const gIn = sc ? ease(fade(t, sc.at, sc.at + 1.4)) : 0;
+  if (prev && gIn < 1) { ctx.globalAlpha = (1 - gIn) * prev.glowA; ctx.drawImage(prev.glow, 0, 0, W, H); }
+  if (sc) { ctx.globalAlpha = gIn * sc.glowA; ctx.drawImage(sc.glow, 0, 0, W, H); }
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+
+  // ışık süpürmesi (shine)
+  const lt = sc ? t - sc.at - 1.3 : -1;
+  const sweep = lt > 0 ? (lt % 3.6) * 650 - 250 : -9999;
+  const shine = sc ? sc.shine : 0;
+
+  for (let i = 0; i < N; i++) {
+    const p = P[i];
+    let g;
+    if (sc && t - sc.at > p.d) g = sc.tg[i];
+    else if (prev) g = prev.tg[i];
+    else g = p.home;
+
+    let tx = g.x, ty = g.y, r = g.r, gg = g.g, b = g.b;
+    if (g.f) {
+      const ph = g.x * 0.011 - t * 3.2;
+      ty += Math.sin(ph) * 28 * (0.15 + g.u);
+      tx += Math.cos(ph) * 6 * g.u;
+      const sh = 0.78 + 0.22 * Math.cos(ph);
+      r *= sh; gg *= sh; b *= sh;
+    }
+    if (g.sp) {
+      tx += Math.sin(t * 0.6 + i) * 16;
+      ty += Math.cos(t * 0.5 + i * 1.3) * 16;
+    } else if (g === sc?.tg[i] && sweep > -9000) {
+      const dq = (g.q - sweep) / 70;
+      const bo = Math.exp(-dq * dq) * shine;
+      r += bo; gg += bo; b += bo;
+    }
+
+    p.vx = (p.vx + (tx - p.x) * p.k) * 0.84;
+    p.vy = (p.vy + (ty - p.y) * p.k) * 0.84;
+    p.x += p.vx; p.y += p.vy;
+    p.r += (r - p.r) * 0.1;
+    p.g += (gg - p.g) * 0.1;
+    p.b += (b - p.b) * 0.1;
+    p.a += (g.a - p.a) * 0.06;
+    p.s += (g.s - p.s) * 0.08;
+
+    ctx.fillStyle = `rgba(${p.r | 0},${p.g | 0},${p.b | 0},${p.a.toFixed(2)})`;
+    ctx.fillRect(p.x - p.s / 2, p.y - p.s / 2, p.s, p.s);
+  }
+
+  ctx.drawImage(vignette, 0, 0);
+  overlay(t);
+
+  // film greni
+  ctx.save();
+  ctx.globalAlpha = 0.035;
+  ctx.translate((Math.random() * 256) | 0, (Math.random() * 256) | 0);
+  ctx.fillStyle = grainPattern;
+  ctx.fillRect(-256, -256, W + 256, H + 256);
+  ctx.restore();
+
+  // döngü için kararma
+  const fo = fade(t, END - 0.8, END);
+  if (fo > 0) { ctx.globalAlpha = fo; ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; }
+
+  if (t > END + 1) restart();
+  requestAnimationFrame(frame);
+}
+
+function restart() {
+  start = performance.now();
+  cur = -1;
+  ctx.globalAlpha = 1;
+  ctx.drawImage(bg, 0, 0);
+  for (const p of P) {
+    p.x = Math.random() * W; p.y = Math.random() * H;
+    p.vx = p.vy = 0; p.a = 0;
+  }
+}
+
+// ================= ARAYÜZ =================
+function loadImg(src) {
+  return new Promise((res, rej) => {
+    const im = new Image();
+    im.onload = () => res(im); im.onerror = rej; im.src = src;
+  });
+}
+
+// Atatürk imzası (beyaz, şeffaf zemin)
+const IMZA = new Image();
+IMZA.src = 'imza.png';
+
+// Portreler (klasördeki görseller)
+const DEFAULT_PORTRAITS = ['atam1.jpg', 'atam2.jpg'];
+
+document.getElementById('fs').onclick = () => {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+  else document.exitFullscreen?.();
+};
+addEventListener('keydown', e => {
+  if (e.key === 'h' || e.key === 'H') document.getElementById('ui').classList.toggle('hidden');
+  if (e.key === 'r' || e.key === 'R') restart();
+});
+
+// ================= BAŞLAT =================
+(async () => {
+  try {
+    await Promise.race([
+      Promise.all([
+        document.fonts.load('200px Anton'),
+        document.fonts.load('700 40px Inter'),
+        document.fonts.load('600 26px Inter'),
+        document.fonts.load('italic 42px "Playfair Display"')
+      ]),
+      new Promise(r => setTimeout(r, 2500))
+    ]);
+  } catch (e) {}
+
+  try { portraits = await Promise.all(DEFAULT_PORTRAITS.map(loadImg)); } catch (e) { portraits = []; }
+  makeScenes();
+  restart();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
