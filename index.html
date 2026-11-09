@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>10 Kasım · Sonsuza Dek</title>
+<title>10 Kasım · Sonsuza Dek · @sheymacodding</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@500;600;700&family=Playfair+Display:ital,wght@1,400&display=swap" rel="stylesheet">
@@ -338,6 +338,10 @@ function overlay(t) {
   ctx.fillRect(70, H - 62, W - 140, 3);
   ctx.fillStyle = 'rgba(255,255,255,.85)';
   ctx.fillRect(70, H - 62, (W - 140) * clamp01(t / END), 3);
+
+  // kendi imzam
+  ctx.textAlign = 'center';
+  txt('@sheymacodding', W / 2, H - 110, '600 24px Inter, sans-serif', 'rgba(255,255,255,.55)', 4, hud);
 
   // --- Portre sahnesi: köşe çizgileri, etiketler, alt yazı ---
   const tp = T('portrait');
